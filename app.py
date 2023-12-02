@@ -11,12 +11,18 @@ from flask import render_template, request, redirect
 import random, string
 import requests
 import os
+import prometheus_client
 
 # https://dev.netatmo.com/apps/createanapp
 
 logging.basicConfig(format='%(asctime)s %(levelname)-8s %(message)s', stream=sys.stdout, level=logging.DEBUG, datefmt='%Y-%m-%d %H:%M:%S')
 
 app=Flask(__name__) #instantiating flask object
+kpiPiTemp =      prometheus_client.Gauge('app_pi_temp', 'Current temperature of pi sensor')
+kpiPiHumidity =  prometheus_client.Gauge('app_pi_humidity', 'Current humidity of pi sensor')
+kpiSetPoint =    prometheus_client.Gauge('app_set_point', 'Netatmo target temp')
+kpiNetatmoTemp = prometheus_client.Gauge('app_netatmo_temp', 'Netatmo sensor temp')
+kpiBoosting =    prometheus_client.Gauge('app_boosting', 'Whether app think its currently got heating on')
 
 sensor = Adafruit_DHT.DHT22
 # DHT22 sensor connected to GPIO12.
@@ -154,6 +160,10 @@ def func2(): #writing a function to be executed
 
 # curl -X POST "https://api.netatmo.com/api/setroomthermpoint?home_id={homeID}&room_id={roomID}&mode=manual&temp=19&endtime=1679949948" -H "accept: application/json" -H "Authorization: Bearer {bearer}"
 def setThermPoint(conn, config, desiredTemp, desiredDuration, refreshToken=False):
+
+	# Temporarily disable turning on boiler
+	return "{}"
+
 	token = config['token']
 	if refreshToken:
 		token = refreshAuthToken(conn, config)
@@ -188,15 +198,23 @@ def bgWorker():
 	heatingTime=15*60
 	boosting=False
 
+	kpiBoosting.set(0)
+
 	while True:
 		zoneInfo = getNetatmoTemp(conn, config)
 		if zoneInfo!=None:
 
 			humidity, roomTemp = Adafruit_DHT.read_retry(sensor, pin)
 
+
 			# Todo, navigate to roomID...
 			zoneSetPoint = zoneInfo['therm_setpoint_temperature']
 			zoneTemp = zoneInfo['therm_measured_temperature']
+
+			kpiPiTemp.set(roomTemp)
+			kpiPiHumidity.set(humidity)
+			kpiSetPoint.set(zoneSetPoint)
+			kpiNetatmoTemp.set(zoneTemp)
 
 			action = None
 			if roomTemp < desiredTemp:
@@ -204,13 +222,17 @@ def bgWorker():
 					if setThermPoint(conn, config, zoneMaxSetPoint, heatingTime) != None:
 						action = "Boosting now for {} min".format(heatingTime/60)
 						boosting=True
+						kpiBoosting.set(1)
 					else:
 						action = "Boosting failed"
+						kpiBoosting.set(-1)
 				else:
 					action = "Heating in progress."
+					kpiBoosting.set(1)
 				
 			else:
 				action = "No boost needed"
+				kpiBoosting.set(0)
 
 				if boosting and zoneSetPoint==zoneMaxSetPoint:
 					# TODO Clear the manual setting we set earlier
@@ -233,6 +255,7 @@ def bgWorker():
 
 if __name__=='__main__': #calling  main 
 	try:
+		prometheus_client.start_http_server(8000)
 		threading.Thread(target=bgWorker).start()
 		app.run(host="0.0.0.0", port=3000, threaded=True, debug=False) #launching the flask's integrated development webserver
 

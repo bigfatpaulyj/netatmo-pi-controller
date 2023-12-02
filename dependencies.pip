@@ -10,3 +10,4 @@ Werkzeug==2.2.2
 zipp==3.11.0
 requests==2.21.0
 goless==0.7.2
+prometheus-client==0.17.1
