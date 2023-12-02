@@ -1,0 +1,28 @@
+<html>
+    <head>
+        <title>DHT22 Sensor</title>
+    </head>
+    <body>
+        <h1 style="color:#093657"> Current reading
+        </h1>
+        Temp: {{context.temperature}}
+        Humidity Temp: {{context.humidity}}
+
+        <br />
+
+        {% if context.config.token is none %}
+            <a href="https://api.netatmo.com/oauth2/authorize?client_id={{context.config.clientid}}&redirect_uri={{context.config.redirect_url}}&scope=read_thermostat%20write_thermostat&state={{context.state}}">Authorise Now</a>
+        {% else %}
+            You are authorised.    
+        {% endif %}    
+
+        {% if context.netatmo is not none %}
+            <-- TODO navigate to roomID -->
+            Current netatmo temp is {{context.netatmo.therm_setpoint_temperature}}
+        {% else %}
+            No Netatmo info available.    
+        {% endif %}            
+            
+
+    </body>
+</html>
