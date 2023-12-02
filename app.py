@@ -38,8 +38,9 @@ def getNetatmoTemp(conn, config, refreshToken=False):
 		headers={'Authorization': 'Bearer {}'.format(token)})
 	logging.info("Got homestatus response({}): {} {}".format(r.status_code, r.text, token))
 
+	jsonPayload=r.json()
 	if r.status_code==200:
-		for roomData in zoneInfo['body']['home']['rooms']:
+		for roomData in jsonPayload['body']['home']['rooms']:
 			if roomData['id']==roomID:
 				return roomData
 
@@ -79,11 +80,11 @@ def refreshAuthToken(conn, config):
 		logging.info("Tokens refreshed in DB.")
 		return codes['access_token']
 
-        return None
+	return None
 
 def randomword(length):
-   letters = string.ascii_lowercase
-   return ''.join(random.choice(letters) for i in range(length))
+	letters = string.ascii_lowercase
+	return ''.join(random.choice(letters) for i in range(length))
 
 def loadConfig(conn):
 	conn.row_factory = sqlite3.Row
@@ -105,12 +106,12 @@ def func1():
 		r = requests.post(
 			'https://api.netatmo.com/oauth2/token', 
 			data={
-    			"grant_type":  "authorization_code",
-    			"client_id": config['clientid'],
-   				"client_secret": config['clientsecret'],
-   				"code": request.args['code'],
+				"grant_type":  "authorization_code",
+				"client_id": config['clientid'],
+				"client_secret": config['clientsecret'],
+				"code": request.args['code'],
 				"redirect_uri": config['redirect_url'],
-    			"scope": "read_thermostat write_thermostat"
+				"scope": "read_thermostat write_thermostat"
 			}, 
 			headers={'Content-Type': 'application/x-www-form-urlencoded'})
 		logging.info("Got response({}): {}".format(r.status_code, r.text))
