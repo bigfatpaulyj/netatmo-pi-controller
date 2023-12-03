@@ -18,11 +18,7 @@ import prometheus_client
 logging.basicConfig(format='%(asctime)s %(levelname)-8s %(message)s', stream=sys.stdout, level=logging.DEBUG, datefmt='%Y-%m-%d %H:%M:%S')
 
 app=Flask(__name__) #instantiating flask object
-kpiPiTemp =      prometheus_client.Gauge('app_pi_temp', 'Current temperature of pi sensor')
-kpiPiHumidity =  prometheus_client.Gauge('app_pi_humidity', 'Current humidity of pi sensor')
-kpiSetPoint =    prometheus_client.Gauge('app_set_point', 'Netatmo target temp')
-kpiNetatmoTemp = prometheus_client.Gauge('app_netatmo_temp', 'Netatmo sensor temp')
-kpiBoosting =    prometheus_client.Gauge('app_boosting', 'Whether app think its currently got heating on')
+kpi = prometheus_client.Gauge('app_gauges', 'Netatmo pi controller gauges', ['type'])
 
 sensor = Adafruit_DHT.DHT22
 # DHT22 sensor connected to GPIO12.
@@ -161,8 +157,8 @@ def func2(): #writing a function to be executed
 # curl -X POST "https://api.netatmo.com/api/setroomthermpoint?home_id={homeID}&room_id={roomID}&mode=manual&temp=19&endtime=1679949948" -H "accept: application/json" -H "Authorization: Bearer {bearer}"
 def setThermPoint(conn, config, desiredTemp, desiredDuration, refreshToken=False):
 
-	# Temporarily disable turning on boiler
-	return "{}"
+	# # Temporarily disable turning on boiler
+	# return "{}"
 
 	token = config['token']
 	if refreshToken:
@@ -198,7 +194,7 @@ def bgWorker():
 	heatingTime=15*60
 	boosting=False
 
-	kpiBoosting.set(0)
+	kpi.labels('boosting').set(0)
 
 	while True:
 		zoneInfo = getNetatmoTemp(conn, config)
@@ -211,10 +207,10 @@ def bgWorker():
 			zoneSetPoint = zoneInfo['therm_setpoint_temperature']
 			zoneTemp = zoneInfo['therm_measured_temperature']
 
-			kpiPiTemp.set(roomTemp)
-			kpiPiHumidity.set(humidity)
-			kpiSetPoint.set(zoneSetPoint)
-			kpiNetatmoTemp.set(zoneTemp)
+			kpi.labels('pi-temp').set(roomTemp)
+			kpi.labels('pi-humidity').set(humidity)
+			kpi.labels('setpoint').set(zoneSetPoint)
+			kpi.labels('netatmo-temp').set(zoneTemp)
 
 			action = None
 			if roomTemp < desiredTemp:
@@ -222,17 +218,17 @@ def bgWorker():
 					if setThermPoint(conn, config, zoneMaxSetPoint, heatingTime) != None:
 						action = "Boosting now for {} min".format(heatingTime/60)
 						boosting=True
-						kpiBoosting.set(1)
+						kpi.labels('boosting').set(1)
 					else:
 						action = "Boosting failed"
-						kpiBoosting.set(-1)
+						kpi.labels('boosting').set(-1)
 				else:
 					action = "Heating in progress."
-					kpiBoosting.set(1)
+					kpi.labels('boosting').set(1)
 				
 			else:
 				action = "No boost needed"
-				kpiBoosting.set(0)
+				kpi.labels('boosting').set(0)
 
 				if boosting and zoneSetPoint==zoneMaxSetPoint:
 					# TODO Clear the manual setting we set earlier
