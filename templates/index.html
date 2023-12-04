@@ -1,28 +1,43 @@
 <html>
     <head>
-        <title>DHT22 Sensor</title>
+        <title>pi-netatmo-controller</title>
     </head>
     <body>
-        <h1 style="color:#093657"> Current reading
+        <h1 style="color:#093657">Raspberry Pi Netatmo Thermostat Controller
         </h1>
-        Temp: {{context.temperature}}
-        Humidity Temp: {{context.humidity}}
 
-        <br />
+        <h2>Current Status</h2>
+
+        Temp: {{context.temperature|round}}
+        <p>
+        Humidity Temp: {{context.humidity|round}}
+        <p>
+
+        {% if context.netatmo is not none %}
+            Current netatmo setpoint is {{context.netatmo.therm_setpoint_temperature}}
+        {% else %}
+            No Netatmo info available.    
+        {% endif %}    
+
+        <p>
 
         {% if context.config.token is none %}
             <a href="https://api.netatmo.com/oauth2/authorize?client_id={{context.config.clientid}}&redirect_uri={{context.config.redirect_url}}&scope=read_thermostat%20write_thermostat&state={{context.state}}">Authorise Now</a>
         {% else %}
-            You are authorised.    
+            <i>You are authorised.</i>
         {% endif %}    
 
-        {% if context.netatmo is not none %}
-            <-- TODO navigate to roomID -->
-            Current netatmo temp is {{context.netatmo.therm_setpoint_temperature}}
-        {% else %}
-            No Netatmo info available.    
-        {% endif %}            
-            
+        <hr/>
+        
+        <h2>Settings</h2>
+
+        <form action="/" method="post">
+            <label for="desired">Desired room temperature:</label>
+            <input type="number" id="desired" name="desired" min="1" max="30" value="{{context.config.desiredtemp}}"> <br>
+            <label for="status">Enabled:</label>
+            <input type="checkbox" name="status" value="on"{% if context.config.enabled==1 %}checked{% endif %}><br>
+            <input type="submit" value="Submit"><br>     
+        </form>
 
     </body>
 </html>

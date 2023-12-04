@@ -16,7 +16,7 @@ import prometheus_client
 # https://dev.netatmo.com/apps/createanapp
 
 logging.basicConfig(format='%(asctime)s %(levelname)-8s %(message)s', stream=sys.stdout, level=logging.DEBUG, datefmt='%Y-%m-%d %H:%M:%S')
-
+exitCondition = threading.Condition()
 app=Flask(__name__) #instantiating flask object
 kpi = prometheus_client.Gauge('app_gauges', 'Netatmo pi controller gauges', ['type'])
 
@@ -25,6 +25,8 @@ sensor = Adafruit_DHT.DHT22
 pin = 12
 roomID=os.environ['roomID']
 homeID=os.environ['homeID']
+humidity = 0.0
+roomTemp = 0.0
 
 # read current netatmo temps:
 # curl -X GET "https://api.netatmo.com/api/homestatus?home_id={homeID}" -H "accept: application/json" -H "Authorization: Bearer {bearer}"
@@ -99,7 +101,8 @@ def loadConfig(conn):
 
 # http://raspberrypi.local:5000/postauth?state={state}&code={code}
 @app.route('/postauth')
-def func1():
+def handleNetatmoAuthResponse():
+
 	if 'code' in request.args:
 		logging.info("Got code in callback : {}".format(request.args['code']))
 
@@ -134,30 +137,64 @@ def func1():
 
 	return redirect('/', code=302)
 
-@app.route('/') #defining a route in the application
-def func2(): #writing a function to be executed 
+@app.route('/', methods=['GET', 'POST']) #defining a route in the application
+def handleAdminPageRequest(): #writing a function to be executed 
 	authRequired=False
 	conn = sqlite3.connect('config.db')
 	config=loadConfig(conn)
 
-	humidity, temperature = Adafruit_DHT.read_retry(sensor, pin)
-	# if humidity is not None and temperature is not None:
-	# 	return("Temp={0:0.1f}*C Humidity={1:0.1f}%".format(temperature, humidity))
-	# else:
-	# 	return("Failed to get reading. Try again!")
+	if request.method == 'POST':
+		newStatus = 0
+		try:
+			newStatus = 1 if request.form['status']=='on' else 0
+		except KeyError:
+			pass
+
+		cursor = conn.cursor()
+		config=cursor.execute('''UPDATE netatmo set desiredtemp=?, enabled=? WHERE clientid=? LIMIT 1''', 
+			(request.form['desired'], newStatus, config['clientid']))
+		conn.commit()
+		logging.info("Updated config with desiredtemp={}, enabled={}".format(request.form['desired'], newStatus))
+
+		return redirect('/', code=302)
 
 	return render_template('index.html', context={
 		'humidity':humidity,
-		'temperature':temperature,
+		'temperature':roomTemp,
 		'config': config,
 		'state': randomword(8),
 		'netatmo': getNetatmoTemp(conn, config)
 	})		
 
+# curl -X POST "https://api.netatmo.com/api/setroomthermpoint?home_id={}&room_id={}&mode=home" -H "accept: application/json" -H "Authorization: Bearer {}"
+def setScheduleMode(conn, config, refreshToken=False):
+
+	token = config['token']
+	if refreshToken:
+		token = refreshAuthToken(conn, config)
+		if token == None : return None
+
+	r = requests.post(
+		'https://api.netatmo.com/api/setroomthermpoint?home_id={}&room_id={}&mode=home'.format(
+			homeID,
+			roomID
+		),
+		headers={'Authorization': 'Bearer {}'.format(token)})
+	logging.info("setScheduleMode response({}): {} {}".format(r.status_code, r.text, token))
+
+	if r.status_code==200:
+		return r.json()
+
+	if r.status_code in [403] and refreshToken==False:
+		return setScheduleMode(conn, config, True)
+
+	# Some other error
+	return None	
+
 # curl -X POST "https://api.netatmo.com/api/setroomthermpoint?home_id={homeID}&room_id={roomID}&mode=manual&temp=19&endtime=1679949948" -H "accept: application/json" -H "Authorization: Bearer {bearer}"
 def setThermPoint(conn, config, desiredTemp, desiredDuration, refreshToken=False):
 
-	# # Temporarily disable turning on boiler
+	# Temporarily disable turning on boiler
 	# return "{}"
 
 	token = config['token']
@@ -184,72 +221,82 @@ def setThermPoint(conn, config, desiredTemp, desiredDuration, refreshToken=False
 	# Some other error
 	return None
 
-exitCondition = threading.Condition()
+
 def bgWorker():
 	interval = 60
 	conn = sqlite3.connect('config.db')
 	config=loadConfig(conn)
-	desiredTemp = 19
 	zoneMaxSetPoint = 21
 	heatingTime=15*60
-	boosting=False
 
 	kpi.labels('boosting').set(0)
 
 	while True:
+		humidity, roomTemp = Adafruit_DHT.read_retry(sensor, pin)		
+		kpi.labels('pi-temp').set(roomTemp)
+		kpi.labels('pi-humidity').set(humidity)
+
 		zoneInfo = getNetatmoTemp(conn, config)
 		if zoneInfo!=None:
-
-			humidity, roomTemp = Adafruit_DHT.read_retry(sensor, pin)
-
-
-			# Todo, navigate to roomID...
 			zoneSetPoint = zoneInfo['therm_setpoint_temperature']
 			zoneTemp = zoneInfo['therm_measured_temperature']
+			zoneSetEndTime = zoneInfo['therm_setpoint_end_time'] if 'therm_setpoint_end_time' in zoneInfo else None
+			boilerFiring = True if zoneInfo['heating_power_request'] == 1 else False
+			thermMode = zoneInfo['therm_setpoint_mode']
 
-			kpi.labels('pi-temp').set(roomTemp)
-			kpi.labels('pi-humidity').set(humidity)
 			kpi.labels('setpoint').set(zoneSetPoint)
 			kpi.labels('netatmo-temp').set(zoneTemp)
+		
+			appControllingBoiler = thermMode=='manual' and zoneSetPoint==zoneMaxSetPoint
+			if config['enabled']==1 and (thermMode == 'schedule' or appControllingBoiler):
+				# Only take actions if we're in schedule mode, or manual mode with our configured setpoint.
+				action = None
+				weWantBoilerOn = roomTemp < config['desiredtemp']
+				issueHeatingRequest=False
 
-			action = None
-			if roomTemp < desiredTemp:
-				if zoneTemp >= zoneSetPoint:
-					if setThermPoint(conn, config, zoneMaxSetPoint, heatingTime) != None:
-						action = "Boosting now for {} min".format(heatingTime/60)
-						boosting=True
-						kpi.labels('boosting').set(1)
+				if weWantBoilerOn:
+					boostNeeded = zoneSetPoint < zoneTemp 
+					currentlyFiringButSoonOff = boilerFiring and zoneSetEndTime!=None and (zoneSetEndTime - int(time.time())) < (interval * 2)	
+
+					if not boilerFiring and boostNeeded:
+						issueHeatingRequest=True
+						action = "Heat needed, and boiler not on, boosting now for {} min".format(heatingTime/60)
+
+					if currentlyFiringButSoonOff:
+						issueHeatingRequest=True
+						action = "Boiler on, but ending soon, extending boost now for {} min".format(heatingTime/60)
+
+					if issueHeatingRequest:
+						if setThermPoint(conn, config, zoneMaxSetPoint, heatingTime) != None:
+							kpi.labels('boosting').set(1)
+						else:
+							action = "Boosting failed"
+							kpi.labels('boosting').set(-1)
 					else:
-						action = "Boosting failed"
-						kpi.labels('boosting').set(-1)
+						action = "Heating in progress."
+						kpi.labels('boosting').set(1)
+				elif appControllingBoiler:
+					action = "Clearing existing boost"
+					
+					if setScheduleMode(conn, config) != None:
+						kpi.labels('boosting').set(0)
+					else:
+						action = "Clearing existing boost failed"
+						kpi.labels('boosting').set(-2)
 				else:
-					action = "Heating in progress."
-					kpi.labels('boosting').set(1)
+					action = "No boost or clear needed"
+					kpi.labels('boosting').set(0)
 				
-			else:
-				action = "No boost needed"
-				kpi.labels('boosting').set(0)
-
-				if boosting and zoneSetPoint==zoneMaxSetPoint:
-					# TODO Clear the manual setting we set earlier
-					#setThermPoint(conn, config, None, heatingTime)
-					boosting=False
-					action = "No boost needed, clearing boost request."
-				else:
-					action = "No boost needed"
-
-
-			
-			# TODO - do we need to turn it off to prevent over heating!?
-
-			logging.info("Action '{}' : roomTemp({}), roomSetPoint({}), zoneTemp({}), zoneSetPoint({}-->{})".format(
-				action, roomTemp, desiredTemp, zoneTemp, zoneSetPoint, zoneMaxSetPoint) )
+				logging.info("Action '{}' : roomTemp({}), roomSetPoint({}), zoneTemp({}), zoneSetPoint({}-->{})".format(
+					action, roomTemp, config['desiredtemp'], zoneTemp, zoneSetPoint, zoneMaxSetPoint) )
 
 		with exitCondition:
 			val=exitCondition.wait(interval)
 			if val: return
 
-if __name__=='__main__': #calling  main 
+		config=loadConfig(conn)
+
+if __name__=='__main__':
 	try:
 		prometheus_client.start_http_server(8000)
 		threading.Thread(target=bgWorker).start()
