@@ -21,6 +21,12 @@
 
         <p>
 
+        <a href="http://{{context.servinghost}}:9090/graph?g0.range_input=12h&g0.expr=app_gauges&g0.tab=0" target="_blank">
+            Open Prometheus
+        </a>
+
+        <p>
+
         {% if context.config.token is none %}
             <a href="https://api.netatmo.com/oauth2/authorize?client_id={{context.config.clientid}}&redirect_uri={{context.config.redirect_url}}&scope=read_thermostat%20write_thermostat&state={{context.state}}">Authorise Now</a>
         {% else %}

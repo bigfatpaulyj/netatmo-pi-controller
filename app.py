@@ -12,6 +12,7 @@ import random, string
 import requests
 import os
 import prometheus_client
+import datetime
 
 # https://dev.netatmo.com/apps/createanapp
 
@@ -163,7 +164,8 @@ def handleAdminPageRequest(): #writing a function to be executed
 		'temperature':roomTemp,
 		'config': config,
 		'state': randomword(8),
-		'netatmo': getNetatmoTemp(conn, config)
+		'netatmo': getNetatmoTemp(conn, config),
+		'servinghost': request.headers.get('Host').split(':')[0]
 	})		
 
 # curl -X POST "https://api.netatmo.com/api/setroomthermpoint?home_id={}&room_id={}&mode=home" -H "accept: application/json" -H "Authorization: Bearer {}"
@@ -247,8 +249,11 @@ def bgWorker():
 			kpi.labels('setpoint').set(zoneSetPoint)
 			kpi.labels('netatmo-temp').set(zoneTemp)
 		
+			hourOfDay = datetime.datetime.now().hour
+			acceptableTime = hourOfDay >= 21 or hourOfDay <= 6
+
 			appControllingBoiler = thermMode=='manual' and zoneSetPoint==zoneMaxSetPoint
-			if config['enabled']==1 and (thermMode == 'schedule' or appControllingBoiler):
+			if acceptableTime and config['enabled']==1 and (thermMode == 'schedule' or appControllingBoiler):
 				# Only take actions if we're in schedule mode, or manual mode with our configured setpoint.
 				action = None
 				weWantBoilerOn = roomTemp < config['desiredtemp']
