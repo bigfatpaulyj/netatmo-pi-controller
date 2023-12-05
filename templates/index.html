@@ -8,13 +8,13 @@
 
         <h2>Current Status</h2>
 
-        Temp: {{context.temperature|round}}
+        Pi Temperature: {{context.temperature|round}}
         <p>
-        Humidity Temp: {{context.humidity|round}}
+        Pi Humidity: {{context.humidity|round}}
         <p>
 
         {% if context.netatmo is not none %}
-            Current netatmo setpoint is {{context.netatmo.therm_setpoint_temperature}}
+            Netatmo setpoint: {{context.netatmo.therm_setpoint_temperature}}
         {% else %}
             No Netatmo info available.    
         {% endif %}    

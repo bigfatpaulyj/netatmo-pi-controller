@@ -47,6 +47,8 @@ def getNetatmoTemp(conn, config, refreshToken=False):
 	if r.status_code==200:
 		for roomData in jsonPayload['body']['home']['rooms']:
 			if roomData['id']==roomID:
+				kpi.labels('setpoint').set(roomData['therm_setpoint_temperature'])
+				kpi.labels('netatmo-temp').set(roomData['therm_measured_temperature'])
 				return roomData
 
 		logging.error('Room ID {} not found in data returned from server.'.format(roomID))
@@ -140,6 +142,7 @@ def handleNetatmoAuthResponse():
 
 @app.route('/', methods=['GET', 'POST']) #defining a route in the application
 def handleAdminPageRequest(): #writing a function to be executed 
+	global humidity, roomTemp
 	authRequired=False
 	conn = sqlite3.connect('config.db')
 	config=loadConfig(conn)
@@ -225,11 +228,13 @@ def setThermPoint(conn, config, desiredTemp, desiredDuration, refreshToken=False
 
 
 def bgWorker():
+	global humidity, roomTemp
 	interval = 60
 	conn = sqlite3.connect('config.db')
 	config=loadConfig(conn)
 	zoneMaxSetPoint = 21
 	heatingTime=15*60
+	lastNetatmoSuccessTime=0
 
 	kpi.labels('boosting').set(0)
 
@@ -238,22 +243,23 @@ def bgWorker():
 		kpi.labels('pi-temp').set(roomTemp)
 		kpi.labels('pi-humidity').set(humidity)
 
-		zoneInfo = getNetatmoTemp(conn, config)
-		if zoneInfo!=None:
+		hourOfDay = datetime.datetime.now().hour
+		acceptableTime = hourOfDay >= 21 or hourOfDay <= 6
+
+		# To prevent pulling netatmo data to frequency
+		if lastNetatmoSuccessTime < time.time() - 300:
+			zoneInfo = getNetatmoTemp(conn, config)
+			if zoneInfo != None:
+				lastNetatmoSuccessTime=time.time()
+		
+		if acceptableTime and zoneInfo!=None:
 			zoneSetPoint = zoneInfo['therm_setpoint_temperature']
 			zoneTemp = zoneInfo['therm_measured_temperature']
 			zoneSetEndTime = zoneInfo['therm_setpoint_end_time'] if 'therm_setpoint_end_time' in zoneInfo else None
-			boilerFiring = True if zoneInfo['heating_power_request'] == 1 else False
 			thermMode = zoneInfo['therm_setpoint_mode']
 
-			kpi.labels('setpoint').set(zoneSetPoint)
-			kpi.labels('netatmo-temp').set(zoneTemp)
-		
-			hourOfDay = datetime.datetime.now().hour
-			acceptableTime = hourOfDay >= 21 or hourOfDay <= 6
-
 			appControllingBoiler = thermMode=='manual' and zoneSetPoint==zoneMaxSetPoint
-			if acceptableTime and config['enabled']==1 and (thermMode == 'schedule' or appControllingBoiler):
+			if config['enabled']==1 and (thermMode == 'schedule' or appControllingBoiler):
 				# Only take actions if we're in schedule mode, or manual mode with our configured setpoint.
 				action = None
 				weWantBoilerOn = roomTemp < config['desiredtemp']
@@ -261,9 +267,9 @@ def bgWorker():
 
 				if weWantBoilerOn:
 					boostNeeded = zoneSetPoint < zoneTemp 
-					currentlyFiringButSoonOff = boilerFiring and zoneSetEndTime!=None and (zoneSetEndTime - int(time.time())) < (interval * 2)	
+					currentlyFiringButSoonOff = zoneSetEndTime!=None and (zoneSetEndTime - int(time.time())) < (interval * 2)	
 
-					if not boilerFiring and boostNeeded:
+					if boostNeeded:
 						issueHeatingRequest=True
 						action = "Heat needed, and boiler not on, boosting now for {} min".format(heatingTime/60)
 
