@@ -1,4 +1,4 @@
-*Control Netatmo Thermostat from Raspberry PI temperature monitor*
+**Control Netatmo Thermostat from Raspberry PI temperature monitor**
 
 NOTE: this is alpha software. Don't rely on it! There's no guarantee it'll work properly!
 
@@ -14,9 +14,14 @@ setpoint for 15 minutes. It keeps extending the boost as necessary.
 There is a set of 'acceptable hours' where it runs - the idea being that it doesn't control the
 temperature outside of those hours. 
 
-*Instructions* 
+The temperature values and setpoint values are recorded into a Prometheus time-series database so you can keep 
+track of how it's performing.
+
+**Instructions** 
 
 This was tested on Raspbian 10. 
+
+Connect the sensor up to the pi by plugging it into the correct GPIO pins as mentioned in the instructions provided with the sensor. The script has a variable that indicates which pin it should use to access the sensor.
 
 You need to create a Netatmo App at https://dev.netatmo.com/apps
 
