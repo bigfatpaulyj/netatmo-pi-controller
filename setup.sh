@@ -11,9 +11,9 @@ pip3 install -r dependencies.pip
 
 # Install and configure prometheus
 sudo apt install prometheus
-echo '  - job_name: netatmo\
+sudo echo "  - job_name: netatmo\
     static_configs:\
-      - targets: ['localhost:8000']' >> /etc/prometheus/prometheus.yml
+      - targets: ['localhost:8000']" >> /etc/prometheus/prometheus.yml
 sudo systemctl restart prometheus
 sudo systemctl enable prometheus
 

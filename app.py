@@ -238,6 +238,7 @@ def bgWorker():
 	lastNetatmoSuccessTime=0
 
 	kpi.labels('boosting').set(0)
+	logging.info("Configured to read from GPIO {}".format(pin))
 
 	while True:
 		try:
