@@ -243,6 +243,14 @@ def bgWorker():
 	while True:
 		try:
 			humidity, roomTemp = Adafruit_DHT.read_retry(sensor, pin)		
+			if humidity==None or roomTemp==None:
+				logging.info("Couldn't get a sensor reading, retrying in 5s...")
+				# Couldn't get a sensor reading due to linux timing issues, try again after 5s
+				with exitCondition:
+					val=exitCondition.wait(5)
+					if val: return			
+					continue
+
 			kpi.labels('pi-temp').set(roomTemp)
 			kpi.labels('pi-humidity').set(humidity)
 
