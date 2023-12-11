@@ -13,6 +13,7 @@ import requests
 import os
 import prometheus_client
 import datetime
+import traceback
 
 # https://dev.netatmo.com/apps/createanapp
 
@@ -23,7 +24,7 @@ kpi = prometheus_client.Gauge('app_gauges', 'Netatmo pi controller gauges', ['ty
 
 sensor = Adafruit_DHT.DHT22
 # DHT22 sensor connected to GPIO12.
-pin = 12
+pin = os.environ['gpioPin'] # default was 12
 roomID=os.environ['roomID']
 homeID=os.environ['homeID']
 humidity = 0.0
@@ -239,67 +240,72 @@ def bgWorker():
 	kpi.labels('boosting').set(0)
 
 	while True:
-		humidity, roomTemp = Adafruit_DHT.read_retry(sensor, pin)		
-		kpi.labels('pi-temp').set(roomTemp)
-		kpi.labels('pi-humidity').set(humidity)
+		try:
+			humidity, roomTemp = Adafruit_DHT.read_retry(sensor, pin)		
+			kpi.labels('pi-temp').set(roomTemp)
+			kpi.labels('pi-humidity').set(humidity)
 
-		hourOfDay = datetime.datetime.now().hour
-		acceptableTime = hourOfDay >= 21 or hourOfDay <= 6
+			hourOfDay = datetime.datetime.now().hour
+			acceptableTime = hourOfDay >= 21 or hourOfDay <= 6
 
-		# To prevent pulling netatmo data to frequency
-		if lastNetatmoSuccessTime < time.time() - 300:
-			zoneInfo = getNetatmoTemp(conn, config)
-			if zoneInfo != None:
-				lastNetatmoSuccessTime=time.time()
-		
-		if acceptableTime and zoneInfo!=None:
-			zoneSetPoint = zoneInfo['therm_setpoint_temperature']
-			zoneTemp = zoneInfo['therm_measured_temperature']
-			zoneSetEndTime = zoneInfo['therm_setpoint_end_time'] if 'therm_setpoint_end_time' in zoneInfo else None
-			thermMode = zoneInfo['therm_setpoint_mode']
+			# To prevent pulling netatmo data to frequency
+			if lastNetatmoSuccessTime < time.time() - 300:
+				zoneInfo = getNetatmoTemp(conn, config)
+				if zoneInfo != None:
+					lastNetatmoSuccessTime=time.time()
+			
+			if acceptableTime and zoneInfo!=None:
+				zoneSetPoint = zoneInfo['therm_setpoint_temperature']
+				zoneTemp = zoneInfo['therm_measured_temperature']
+				zoneSetEndTime = zoneInfo['therm_setpoint_end_time'] if 'therm_setpoint_end_time' in zoneInfo else None
+				thermMode = zoneInfo['therm_setpoint_mode']
 
-			appControllingBoiler = thermMode=='manual' and zoneSetPoint==zoneMaxSetPoint
-			if config['enabled']==1 and (thermMode == 'schedule' or appControllingBoiler):
-				# Only take actions if we're in schedule mode, or manual mode with our configured setpoint.
-				action = None
-				weWantBoilerOn = roomTemp < config['desiredtemp']
-				issueHeatingRequest=False
+				appControllingBoiler = thermMode=='manual' and zoneSetPoint==zoneMaxSetPoint
+				if config['enabled']==1 and (thermMode == 'schedule' or appControllingBoiler):
+					# Only take actions if we're in schedule mode, or manual mode with our configured setpoint.
+					action = None
+					weWantBoilerOn = roomTemp < config['desiredtemp']
+					issueHeatingRequest=False
 
-				if weWantBoilerOn:
-					boostNeeded = zoneSetPoint < zoneTemp 
-					currentlyFiringButSoonOff = zoneSetEndTime!=None and (zoneSetEndTime - int(time.time())) < (interval * 2)	
+					if weWantBoilerOn:
+						boostNeeded = zoneSetPoint < zoneTemp 
+						currentlyFiringButSoonOff = zoneSetEndTime!=None and (zoneSetEndTime - int(time.time())) < (interval * 2)	
 
-					if boostNeeded:
-						issueHeatingRequest=True
-						action = "Heat needed, and boiler not on, boosting now for {} min".format(heatingTime/60)
+						if boostNeeded:
+							issueHeatingRequest=True
+							action = "Heat needed, and boiler not on, boosting now for {} min".format(heatingTime/60)
 
-					if currentlyFiringButSoonOff:
-						issueHeatingRequest=True
-						action = "Boiler on, but ending soon, extending boost now for {} min".format(heatingTime/60)
+						if currentlyFiringButSoonOff:
+							issueHeatingRequest=True
+							action = "Boiler on, but ending soon, extending boost now for {} min".format(heatingTime/60)
 
-					if issueHeatingRequest:
-						if setThermPoint(conn, config, zoneMaxSetPoint, heatingTime) != None:
-							kpi.labels('boosting').set(1)
+						if issueHeatingRequest:
+							if setThermPoint(conn, config, zoneMaxSetPoint, heatingTime) != None:
+								kpi.labels('boosting').set(1)
+							else:
+								action = "Boosting failed"
+								kpi.labels('boosting').set(-1)
 						else:
-							action = "Boosting failed"
-							kpi.labels('boosting').set(-1)
+							action = "Heating in progress."
+							kpi.labels('boosting').set(1)
+					elif appControllingBoiler:
+						action = "Clearing existing boost"
+						
+						if setScheduleMode(conn, config) != None:
+							kpi.labels('boosting').set(0)
+						else:
+							action = "Clearing existing boost failed"
+							kpi.labels('boosting').set(-2)
 					else:
-						action = "Heating in progress."
-						kpi.labels('boosting').set(1)
-				elif appControllingBoiler:
-					action = "Clearing existing boost"
-					
-					if setScheduleMode(conn, config) != None:
+						action = "No boost or clear needed"
 						kpi.labels('boosting').set(0)
-					else:
-						action = "Clearing existing boost failed"
-						kpi.labels('boosting').set(-2)
-				else:
-					action = "No boost or clear needed"
-					kpi.labels('boosting').set(0)
-				
-				logging.info("Action '{}' : roomTemp({}), roomSetPoint({}), zoneTemp({}), zoneSetPoint({}-->{})".format(
-					action, roomTemp, config['desiredtemp'], zoneTemp, zoneSetPoint, zoneMaxSetPoint) )
+					
+					logging.info("Action '{}' : roomTemp({}), roomSetPoint({}), zoneTemp({}), zoneSetPoint({}-->{})".format(
+						action, roomTemp, config['desiredtemp'], zoneTemp, zoneSetPoint, zoneMaxSetPoint) )
+
+		except Exception:
+		    traceback.print_exc()
+
 
 		with exitCondition:
 			val=exitCondition.wait(interval)

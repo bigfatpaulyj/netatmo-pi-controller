@@ -2,9 +2,12 @@
 set -e
 
 # Install python and the python dependencies
-sudo apt-get install python3-pip
-sudo python3 -m pip install --upgrade pip setuptools wheel
-sudo pip3 install -r dependencies.php
+sudo apt install python3-pip sqlite3
+
+# May not be needed...
+#sudo python3 -m pip install --upgrade pip setuptools wheel
+
+pip3 install -r dependencies.pip
 
 # Install and configure prometheus
 sudo apt install prometheus
@@ -21,4 +24,5 @@ sqlite3 test5.db -init schema.sql \
 
 # Configure the env variables needed by the app (these should really be in the db)
 echo 'export roomID={my-room-id}
-      export homeID={my-home-id}' >> app.env
+      export homeID={my-home-id}
+      export gpioPin={my-gpio-pin}' >> app.env
