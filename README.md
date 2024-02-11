@@ -32,3 +32,8 @@ Once installed you can bring up the app using up.sh script.
 Once the python app is running, you need to authenticate your app against Netatmo by accessing the webpage of the app at : http://{my-pi-hostname}:3000/ . You should only need to do this once. Once you login at Netatmo they'll redirect you back to the redirect_url configured in setup.sh. That URL doesn't need to be publically accessible, just accessible from the place the web browser is running.
 
 Note, there is no authentication on the PI webpage - anyone with access to port 3000 can access it. Don't make it publically accessible and make sure you trust anyone that can route to it. They'll be able to control whether your boiler is on or not.
+
+To have the script auto-start after a reboot add the following to the root crontab (replacing {user} with the username which installed the dependencies):
+@reboot su {user} -c 'cd /home/{installpath} && ./up.sh |& logger -t netatmo'
+
+Logs can be viewed by running: journalctl -f -t netnatmo
